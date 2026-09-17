@@ -1,0 +1,19 @@
+# IROP tail-swap recovery demo
+# Python 3.12 recommended (3.13 works for the MIP; docplex.cp warns but is unused).
+
+cplex>=22.1.1.0          # Community Edition is enough (model is ~226 vars / ~590 constraints)
+docplex>=2.25
+
+dse-do-utils>=0.5.8      # Core01 DataManager / OptimizationEngine base classes
+pandas>=2.0
+numpy>=1.24
+openpyxl>=3.1            # read/write the scenario workbook
+pandera>=0.18            # input-table validation
+
+# dashboard
+dash>=3.0
+dash-bootstrap-components>=2.0
+plotly>=6.0
+
+# tests
+pytest>=7.0

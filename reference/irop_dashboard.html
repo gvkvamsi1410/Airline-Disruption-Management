@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IROP Recovery — Tail Swap Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #12161B;
+    --panel: #191E25;
+    --panel-2: #1F252D;
+    --border: #2B323C;
+    --border-soft: #232A32;
+    --text: #E7EAEE;
+    --text-dim: #8C97A6;
+    --text-faint: #5C6673;
+    --teal: #2DD4BF;
+    --teal-dim: #164E48;
+    --amber: #F5A623;
+    --amber-dim: #4D3810;
+    --red: #E5484D;
+    --red-dim: #4A1E20;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 20px 16px 40px; }
+
+  .top { margin-bottom: 18px; }
+  .eyebrow { font-size: 11px; color: var(--text-faint); letter-spacing: 0.04em; margin: 0 0 4px; }
+  h1 { font-family: 'Space Grotesk', sans-serif; font-size: 20px; font-weight: 600; margin: 0 0 10px; }
+
+  .disruption {
+    background: var(--amber-dim);
+    border: 1px solid #6b4c14;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+    color: #F0C878;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    line-height: 1.5;
+  }
+  .disruption strong { color: var(--amber); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); margin-top: 5px; flex-shrink: 0; }
+
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin: 16px 0;
+  }
+  @media (min-width: 560px) {
+    .kpis { grid-template-columns: repeat(4, 1fr); }
+  }
+  .kpi {
+    background: var(--panel);
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .kpi-label { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; }
+  .kpi-value { font-family: 'Space Grotesk', sans-serif; font-size: 22px; font-weight: 600; }
+  .kpi-value.teal { color: var(--teal); }
+  .kpi-value.amber { color: var(--amber); }
+  .kpi-sub { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+
+  .section-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    margin: 26px 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .section-note { font-size: 12px; color: var(--text-faint); margin: 0 0 12px; }
+
+  .toggle {
+    display: inline-flex;
+    background: var(--panel);
+    border: 1px solid var(--border-soft);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .toggle button {
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .toggle button.active { background: var(--panel-2); color: var(--text); }
+
+  .timeline-scroll { overflow-x: auto; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--panel); }
+  .timeline { min-width: 720px; padding: 14px 14px 10px; }
+  .axis { display: flex; margin-left: 66px; margin-bottom: 8px; position: relative; height: 14px; }
+  .axis span { position: absolute; font-size: 10px; color: var(--text-faint); }
+  .row { display: flex; align-items: center; margin-bottom: 8px; height: 30px; }
+  .row-label { width: 60px; flex-shrink: 0; font-size: 12px; color: var(--text-dim); font-weight: 500; }
+  .row-track { flex: 1; position: relative; height: 22px; background: var(--border-soft); border-radius: 5px; }
+  .block {
+    position: absolute;
+    top: 0; height: 22px;
+    border-radius: 4px;
+    font-size: 9px;
+    color: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .block.normal { background: #4C5766; color: #E7EAEE; }
+  .block.swap { background: var(--teal); color: #0A2C28; }
+  .block.delay { background: var(--amber); color: #3A2600; }
+  .blackout-band {
+    position: absolute; top: -3px; bottom: -3px;
+    background: rgba(229,72,77,0.10);
+    border-left: 1px dashed rgba(229,72,77,0.5);
+    border-right: 1px dashed rgba(229,72,77,0.5);
+  }
+
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 12px; font-size: 11px; color: var(--text-dim); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .sw { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+  thead th {
+    text-align: left; font-weight: 500; color: var(--text-faint);
+    font-size: 10px; letter-spacing: 0.03em; padding: 6px 8px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  tbody td { padding: 7px 8px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
+  tbody tr.hl { background: rgba(45,212,191,0.05); }
+  .badge {
+    display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 6px;
+    border-radius: 4px; margin-left: 4px;
+  }
+  .badge.swap { background: var(--teal-dim); color: var(--teal); }
+  .badge.delay { background: var(--amber-dim); color: var(--amber); }
+  .strike { text-decoration: line-through; color: var(--text-faint); }
+  .arrow { color: var(--text-faint); margin: 0 4px; }
+
+  .foot { margin-top: 22px; font-size: 11px; color: var(--text-faint); line-height: 1.6; border-top: 1px solid var(--border-soft); padding-top: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <p class="eyebrow">IROP RECOVERY — SYNTHETIC DEMO</p>
+    <h1>Tail-swap recovery: single-tail grounding</h1>
+    <div class="disruption">
+      <div class="dot"></div>
+      <div><strong>Tail A2 grounded at ORD</strong> for unscheduled maintenance, 09:35–13:35 (4h). Recovery model re-solves the remaining day.</div>
+    </div>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="section-title">Fleet timeline</div>
+  <p class="section-note">5 tails, 18 flights. Red band marks the grounding window. Scroll horizontally on small screens.</p>
+  <div class="toggle" id="toggle">
+    <button data-view="before" class="active">Before (as scheduled)</button>
+    <button data-view="after">After (recovered)</button>
+  </div>
+  <div style="height:10px"></div>
+  <div class="timeline-scroll"><div class="timeline" id="timeline"></div></div>
+  <div class="legend">
+    <span><i class="sw" style="background:#4C5766"></i>on schedule</span>
+    <span><i class="sw" style="background:var(--teal)"></i>swapped to different tail</span>
+    <span><i class="sw" style="background:var(--amber)"></i>delayed</span>
+    <span><i class="sw" style="background:rgba(229,72,77,0.3);border:1px dashed rgba(229,72,77,0.6)"></i>grounding window</span>
+  </div>
+
+  <div class="section-title">Flight-by-flight</div>
+  <p class="section-note">Every flight, original vs. recovered assignment.</p>
+  <table>
+    <thead>
+      <tr><th>Flight</th><th>Route</th><th>Sched dep</th><th>Tail</th><th>Actual dep</th></tr>
+    </thead>
+    <tbody id="flightRows"></tbody>
+  </table>
+
+  <div class="foot" id="footNote"></div>
+
+</div>
+
+<script>
+const DATA = {
+  "flights": [
+    {"flight":"F101","origin":"ORD","dest":"DEN","sched_dep":360,"actual_dep":360,"delay_min":0,"orig_tail":"A1","assigned_tail":"A1","swapped":false,"cancelled":false},
+    {"flight":"F401","origin":"ORD","dest":"DEN","sched_dep":375,"actual_dep":375,"delay_min":0,"orig_tail":"B1","assigned_tail":"B1","swapped":false,"cancelled":false},
+    {"flight":"F201","origin":"ORD","dest":"MSP","sched_dep":390,"actual_dep":390,"delay_min":0,"orig_tail":"A2","assigned_tail":"A2","swapped":false,"cancelled":false},
+    {"flight":"F301","origin":"ORD","dest":"STL","sched_dep":420,"actual_dep":420,"delay_min":0,"orig_tail":"A3","assigned_tail":"A3","swapped":false,"cancelled":false},
+    {"flight":"F501","origin":"ORD","dest":"MSP","sched_dep":435,"actual_dep":435,"delay_min":0,"orig_tail":"B2","assigned_tail":"B2","swapped":false,"cancelled":false},
+    {"flight":"F202","origin":"MSP","dest":"ORD","sched_dep":505,"actual_dep":505,"delay_min":0,"orig_tail":"A2","assigned_tail":"A2","swapped":false,"cancelled":false},
+    {"flight":"F302","origin":"STL","dest":"ORD","sched_dep":530,"actual_dep":530,"delay_min":0,"orig_tail":"A3","assigned_tail":"A3","swapped":false,"cancelled":false},
+    {"flight":"F502","origin":"MSP","dest":"ORD","sched_dep":550,"actual_dep":550,"delay_min":0,"orig_tail":"B2","assigned_tail":"B2","swapped":false,"cancelled":false},
+    {"flight":"F102","origin":"DEN","dest":"ORD","sched_dep":555,"actual_dep":555,"delay_min":0,"orig_tail":"A1","assigned_tail":"A1","swapped":false,"cancelled":false},
+    {"flight":"F402","origin":"DEN","dest":"ORD","sched_dep":570,"actual_dep":570,"delay_min":0,"orig_tail":"B1","assigned_tail":"B1","swapped":false,"cancelled":false},
+    {"flight":"F203","origin":"ORD","dest":"STL","sched_dep":620,"actual_dep":640,"delay_min":20,"orig_tail":"A2","assigned_tail":"A3","swapped":true,"cancelled":false},
+    {"flight":"F503","origin":"ORD","dest":"DEN","sched_dep":665,"actual_dep":665,"delay_min":0,"orig_tail":"B2","assigned_tail":"B2","swapped":false,"cancelled":false},
+    {"flight":"F204","origin":"STL","dest":"ORD","sched_dep":730,"actual_dep":750,"delay_min":20,"orig_tail":"A2","assigned_tail":"A3","swapped":true,"cancelled":false},
+    {"flight":"F103","origin":"ORD","dest":"MSP","sched_dep":750,"actual_dep":750,"delay_min":0,"orig_tail":"A1","assigned_tail":"A1","swapped":false,"cancelled":false},
+    {"flight":"F403","origin":"ORD","dest":"STL","sched_dep":765,"actual_dep":765,"delay_min":0,"orig_tail":"B1","assigned_tail":"B1","swapped":false,"cancelled":false},
+    {"flight":"F504","origin":"DEN","dest":"ORD","sched_dep":860,"actual_dep":860,"delay_min":0,"orig_tail":"B2","assigned_tail":"B2","swapped":false,"cancelled":false},
+    {"flight":"F104","origin":"MSP","dest":"ORD","sched_dep":865,"actual_dep":865,"delay_min":0,"orig_tail":"A1","assigned_tail":"A1","swapped":false,"cancelled":false},
+    {"flight":"F404","origin":"STL","dest":"ORD","sched_dep":875,"actual_dep":875,"delay_min":0,"orig_tail":"B1","assigned_tail":"B1","swapped":false,"cancelled":false},
+    {"flight":"F303","origin":"ORD","dest":"DEN","sched_dep":900,"actual_dep":900,"delay_min":0,"orig_tail":"A3","assigned_tail":"A3","swapped":false,"cancelled":false},
+    {"flight":"F304","origin":"DEN","dest":"ORD","sched_dep":1095,"actual_dep":1095,"delay_min":0,"orig_tail":"A3","assigned_tail":"A3","swapped":false,"cancelled":false}
+  ],
+  "summary": {"total_delay_min":40,"num_delayed":2,"num_cancelled":0,"num_swapped":2,"objective_value":340.0,"solve_status":"integer optimal solution","num_variables":226,"num_constraints":544},
+  "disruption": {"tail":"A2","location":"ORD","blackout_start":575,"blackout_end":815},
+  "weights": {"delay":1,"cancel":2000,"swap":150}
+};
+
+const DURATIONS = {
+  "ORD-DEN":150, "DEN-ORD":150, "ORD-MSP":70, "MSP-ORD":70, "ORD-STL":65, "STL-ORD":65
+};
+const TAILS = ["A1","A2","A3","B1","B2"];
+const DAY_START = 340;
+const DAY_END = 1160;
+
+function fmt(min){
+  const h = Math.floor(min/60), m = min%60;
+  return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+}
+
+function renderKpis(){
+  const s = DATA.summary;
+  const el = document.getElementById('kpis');
+  const items = [
+    {label:'Total delay added', value: s.total_delay_min + ' min', cls:'amber'},
+    {label:'Flights swapped', value: s.num_swapped, cls:'teal'},
+    {label:'Flights cancelled', value: s.num_cancelled, cls:''},
+    {label:'Recovery cost (model units)', value: s.objective_value.toFixed(0), cls:''}
+  ];
+  el.innerHTML = items.map(i => `
+    <div class="kpi">
+      <div class="kpi-label">${i.label}</div>
+      <div class="kpi-value ${i.cls}">${i.value}</div>
+    </div>`).join('');
+}
+
+function renderTimeline(view){
+  const el = document.getElementById('timeline');
+  const span = DAY_END - DAY_START;
+  const pxPerMin = 700 / span;
+
+  let axisHtml = '<div class="axis">';
+  for (let t = 6; t <= 19; t += 3) {
+    const pos = (t*60 - DAY_START) * pxPerMin;
+    axisHtml += `<span style="left:${pos}px">${String(t).padStart(2,'0')}:00</span>`;
+  }
+  axisHtml += '</div>';
+
+  let rowsHtml = '';
+  TAILS.forEach(tail => {
+    const flights = DATA.flights.filter(f => {
+      const t = view === 'before' ? f.orig_tail : f.assigned_tail;
+      return t === tail;
+    });
+    let blocksHtml = '';
+
+    if (tail === DATA.disruption.tail) {
+      const bStart = (DATA.disruption.blackout_start - DAY_START) * pxPerMin;
+      const bWidth = (DATA.disruption.blackout_end - DATA.disruption.blackout_start) * pxPerMin;
+      blocksHtml += `<div class="blackout-band" style="left:${bStart}px;width:${bWidth}px"></div>`;
+    }
+
+    flights.forEach(f => {
+      const dep = view === 'before' ? f.sched_dep : (f.actual_dep ?? f.sched_dep);
+      const dur = DURATIONS[f.origin + '-' + f.dest];
+      const left = (dep - DAY_START) * pxPerMin;
+      const width = Math.max(dur * pxPerMin, 20);
+      let cls = 'normal';
+      if (view === 'after' && f.swapped) cls = 'swap';
+      else if (view === 'after' && f.delay_min > 0) cls = 'delay';
+      blocksHtml += `<div class="block ${cls}" style="left:${left}px;width:${width}px" title="${f.flight} ${f.origin}-${f.dest} dep ${fmt(dep)}">${f.flight}</div>`;
+    });
+
+    rowsHtml += `
+      <div class="row">
+        <div class="row-label mono">${tail}</div>
+        <div class="row-track">${blocksHtml}</div>
+      </div>`;
+  });
+
+  el.innerHTML = axisHtml + rowsHtml;
+}
+
+function renderTable(){
+  const rows = [...DATA.flights].sort((a,b) => a.sched_dep - b.sched_dep);
+  const el = document.getElementById('flightRows');
+  el.innerHTML = rows.map(f => {
+    const changed = f.swapped || f.delay_min > 0;
+    const tailCell = f.swapped
+      ? `<span class="strike mono">${f.orig_tail}</span><span class="arrow">&rarr;</span><span class="mono">${f.assigned_tail}</span><span class="badge swap">SWAP</span>`
+      : `<span class="mono">${f.assigned_tail}</span>`;
+    const depCell = f.delay_min > 0
+      ? `<span class="strike mono">${fmt(f.sched_dep)}</span><span class="arrow">&rarr;</span><span class="mono">${fmt(f.actual_dep)}</span><span class="badge delay">+${f.delay_min}m</span>`
+      : `<span class="mono">${fmt(f.actual_dep)}</span>`;
+    return `<tr class="${changed ? 'hl' : ''}">
+      <td class="mono">${f.flight}</td>
+      <td class="mono">${f.origin}&rarr;${f.dest}</td>
+      <td class="mono">${fmt(f.sched_dep)}</td>
+      <td>${tailCell}</td>
+      <td>${depCell}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderFoot(){
+  const w = DATA.weights;
+  document.getElementById('footNote').innerHTML =
+    `Synthetic schedule and disruption, built for this demo — not real airline data. ` +
+    `CPLEX MIP, ${DATA.summary.num_variables} variables / ${DATA.summary.num_constraints} constraints, solved to proven optimality (${DATA.summary.solve_status}). ` +
+    `Objective weights are illustrative assumptions, not customer-provided figures: ${w.delay}/min delay, ${w.cancel}/cancellation, ${w.swap}/swap.`;
+}
+
+document.getElementById('toggle').addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  document.querySelectorAll('#toggle button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTimeline(btn.dataset.view);
+});
+
+renderKpis();
+renderTimeline('before');
+renderTable();
+renderFoot();
+</script>
+</body>
+</html>
