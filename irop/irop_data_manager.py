@@ -57,6 +57,7 @@ class IropDataManager(Core01DataManager):
         # lookups / derived
         self.duration: Dict[Tuple[str, str], int] = {}
         self.disruption_start_min: Optional[int] = None
+        self.planning_now_min: Optional[int] = None
         self.pre_flight_ids: Set[str] = set()
         self.eligible_pairs: List[Tuple[str, str]] = []
         self.connect_pairs: List[Tuple[str, str]] = []
@@ -94,7 +95,10 @@ class IropDataManager(Core01DataManager):
             value_columns=["origin", "dest", "duration_min"],
             dtypes={"duration_min": int},
         )
-        self.leg_durations = legs.set_index(["origin", "dest"], verify_integrity=True)
+        self.leg_durations = legs.set_index(["origin", "dest"])
+        if not self.leg_durations.index.is_unique:
+            dupes = self.leg_durations.index[self.leg_durations.index.duplicated()].tolist()
+            raise ValueError(f"Duplicate (origin, dest) rows in LegDuration: {dupes}")
         self.duration = {idx: int(row.duration_min) for idx, row in self.leg_durations.iterrows()}
 
         self.tails = self.prepare_input_df(
@@ -145,25 +149,52 @@ class IropDataManager(Core01DataManager):
     def pre_processing(self) -> None:
         super().pre_processing()
 
-        # disruption window(s)
-        self.disrupted_tail_windows = {
-            str(r.tail): (int(r.from_min), int(r.until_min)) for r in self.disruptions.itertuples()
-        }
+        # disruption window(s) - one entry per grounded tail. A tail named in
+        # more than one Disruption row is rejected rather than silently
+        # overwritten: two simultaneous groundings of the SAME aircraft is
+        # not a representable scenario (merge them into one row/window first).
+        self.disrupted_tail_windows = {}
+        for r in self.disruptions.itertuples():
+            tail = str(r.tail)
+            window = (int(r.from_min), int(r.until_min))
+            if tail in self.disrupted_tail_windows:
+                raise ValueError(
+                    f"Tail {tail} appears in more than one Disruption row "
+                    f"({self.disrupted_tail_windows[tail]} and {window}) - "
+                    "a tail can only be grounded once per scenario; merge "
+                    "the two rows into a single window before solving."
+                )
+            self.disrupted_tail_windows[tail] = window
+
         self.disruption_start_min = (
             min(w[0] for w in self.disrupted_tail_windows.values())
             if self.disrupted_tail_windows else None
         )
+        # "now": the latest disruption start in this batch - the earliest
+        # moment we could be jointly re-planning around ALL of them, since
+        # a disruption discovered later can't have been acted on any sooner.
+        self.planning_now_min = (
+            max(w[0] for w in self.disrupted_tail_windows.values())
+            if self.disrupted_tail_windows else None
+        )
 
-        # frozen ("already operated") flights: everything that departed before
-        # the disruption became known.  This is the key correction over the
-        # reference model.py, which froze only two flights by hand.
-        if self.disruption_start_min is not None:
-            self.pre_flight_ids = {
-                str(f) for f, m in self.flights["sched_dep_min"].items()
-                if m < self.disruption_start_min
-            }
-        else:
-            self.pre_flight_ids = set()
+        # frozen ("already operated") flights: everything that departed
+        # before recovery planning could have touched it. A tail with its
+        # own disruption freezes relative to THAT disruption's start (not
+        # some other tail's, earlier or later); every other tail freezes
+        # relative to "now". This is the key correction over the reference
+        # model.py, which froze only two flights by hand off one hardcoded
+        # time - and, with more than one disruption, a single shared cutover
+        # for every tail would let the optimizer "retroactively" rewrite an
+        # uninvolved tail's flights that had already operated normally
+        # before its own (later, unrelated) disruption was even known.
+        self.pre_flight_ids = set()
+        if self.disrupted_tail_windows:
+            for f, row in self.flights.iterrows():
+                tail = row["orig_tail"]
+                cutover = self.disrupted_tail_windows.get(tail, (self.planning_now_min,))[0]
+                if row["sched_dep_min"] < cutover:
+                    self.pre_flight_ids.add(str(f))
 
         # subtype-eligible (tail, flight) pairs
         self.eligible_pairs = [

@@ -20,15 +20,15 @@ from irop.irop_data_manager import IropDataManager, fmt_hhmm
 _BASE_DAY = datetime(2026, 1, 1)
 
 COLORS = {
-    "ontime": "#4C5766",
+    "ontime": "#AEBFD1",
     "delay": "#F5A623",
-    "swap": "#2DD4BF",
-    "cancel": "#E5484D",
-    "blackout": "rgba(229,72,77,0.12)",
-    "grid": "#2B323C",
-    "text": "#E7EAEE",
-    "text_dim": "#8C97A6",
-    "panel": "#191E25",
+    "swap": "#14B8A6",
+    "cancel": "#DC2626",
+    "blackout": "rgba(220,38,38,0.08)",
+    "grid": "#DCE6EF",
+    "text": "#152A3A",
+    "text_dim": "#5B7086",
+    "panel": "#FFFFFF",
 }
 
 
@@ -83,7 +83,7 @@ class IropPlotlyManager(PlotlyManager[IropDataManager]):
         )
         fig.update_traces(
             width=0.55, textposition="inside", insidetextanchor="middle",
-            textfont=dict(size=10, color="#0A1014"),
+            textfont=dict(size=10, color=COLORS["text"]),
             hovertemplate="<b>%{customdata[0]}</b> %{customdata[1]}<br>"
                           "dep %{customdata[2]} %{customdata[3]}<extra></extra>",
         )
@@ -108,7 +108,7 @@ class IropPlotlyManager(PlotlyManager[IropDataManager]):
         lo = _ts(dm.flights["sched_dep_min"].min() - 20)
         hi = _ts((dm.flights["sched_dep_min"] + dm.flights["duration_min"]).max() + 20)
         fig.update_layout(
-            template="plotly_dark",
+            template="plotly_white",
             paper_bgcolor=COLORS["panel"], plot_bgcolor=COLORS["panel"],
             height=90 + 46 * len(tail_order),
             margin=dict(l=48, r=24, t=10, b=28),

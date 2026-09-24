@@ -1,8 +1,13 @@
 """IROP recovery dashboard - interactive disruption picker.
 
-Flow: pick a flight in the table -> the aircraft operating it is grounded from
-the moment it lands, for the chosen number of hours -> "Run recovery" re-solves
-the CPLEX model -> the recovered plan, KPIs and action list update.
+Flow: pick one or more flights in the table -> the aircraft operating each
+one is grounded from the moment it lands, for its own chosen number of hours
+(edit the "HOURS" cell per pick) -> "Run recovery" re-solves the CPLEX model
+for all of them at once -> the recovered plan, KPIs and action list update.
+
+Two flights on the SAME aircraft can't both be picked (a tail can only be
+grounded once per scenario) - the picker rejects the second one with a
+message rather than silently producing a broken scenario.
 
 Run:  python dashboard/app.py   then open http://127.0.0.1:8050
 """
@@ -11,6 +16,7 @@ from __future__ import annotations
 import sys
 import warnings
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 warnings.filterwarnings("ignore")
 
@@ -24,10 +30,16 @@ from dash import Input, Output, State, dcc, html
 
 from irop.irop_data_manager import fmt_hhmm
 from irop.irop_plotly_manager import IropPlotlyManager
-from irop.solve import disruption_from_flight, load_inputs_from_excel, solve_scenario
+from irop.solve import (
+    disruptions_from_flights,
+    find_duplicate_tail_picks,
+    load_inputs_from_excel,
+    solve_scenario,
+)
 
 EXCEL = ROOT / "assets" / "data_asset" / "IropInputs.xlsx"
 BASE_INPUTS = load_inputs_from_excel(EXCEL)
+DEFAULT_HOURS = 4.0
 
 # flight table (chronological, with a readable arrival time)
 _ft = BASE_INPUTS["Flight"].copy()
@@ -40,85 +52,125 @@ _ft = _ft.sort_values("dep_min")
 FLIGHT_RECORDS = _ft.rename(columns={"sched_dep": "dep"})[
     ["flight", "origin", "dest", "dep", "arr", "subtype_required", "orig_tail"]
 ].to_dict("records")
+FLIGHT_INDEX_BY_ID = {r["flight"]: i for i, r in enumerate(FLIGHT_RECORDS)}
+DEFAULT_PICK_FLIGHT = "F202"
 
 # cache of the most recent solve (single-user demo)
 _LAST: dict = {}
 
 
-def _run(flight_id: str, hours: float) -> None:
-    disruption = disruption_from_flight(BASE_INPUTS, flight_id, hours)
+def _run(picks: List[Tuple[str, float]]) -> None:
+    disruption = disruptions_from_flights(BASE_INPUTS, picks)
     res = solve_scenario(BASE_INPUTS, disruption=disruption)
     _LAST.update(
         dm=res["dm"], recovery=res["flight_recovery"], summary=res["summary"],
         disruption=disruption, feasibility=res["feasibility"],
-        pick=(flight_id, hours),
+        picks=picks,
     )
 
 
-_run("F202", 4)  # default scenario on load
+_run([(DEFAULT_PICK_FLIGHT, DEFAULT_HOURS)])  # default scenario on load
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY], title="IROP Recovery")
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY], title="IROP Recovery")
+
+# Light theme palette (page: pale blue, cards/table: white, text: dark navy).
+PAGE_BG = "#EAF2FA"
+PANEL_BG = "#FFFFFF"
+BORDER = "#D7E3EE"
+TEXT = "#152A3A"
+TEXT_DIM = "#5B7086"
+ACCENT_AMBER = "#B45309"
+ACCENT_RED = "#B42318"
+SELECT_BG = "#E3F6F3"
+SELECT_BORDER = "#14B8A6"
 
 _TABLE_STYLE = dict(
     style_as_list_view=True,
-    style_header={"backgroundColor": "#12161B", "color": "#8C97A6", "fontWeight": "600",
+    style_header={"backgroundColor": "#F1F6FB", "color": TEXT_DIM, "fontWeight": "600",
                   "border": "none", "fontSize": "12px"},
-    style_cell={"backgroundColor": "#191E25", "color": "#E7EAEE", "border": "none",
+    style_cell={"backgroundColor": PANEL_BG, "color": TEXT, "border": "none",
                 "fontSize": "13px", "fontFamily": "monospace", "padding": "6px 10px"},
     style_data_conditional=[{"if": {"state": "selected"},
-                             "backgroundColor": "#1F3A37", "border": "1px solid #2DD4BF"}],
+                             "backgroundColor": SELECT_BG, "border": f"1px solid {SELECT_BORDER}"}],
 )
 
 
 def kpi_card(label: str, value: str) -> dbc.Col:
     return dbc.Col(dbc.Card(dbc.CardBody([
-        html.Div(label, style={"fontSize": "12px", "color": "#8C97A6"}),
-        html.Div(value, style={"fontSize": "24px", "fontWeight": "700", "color": "#E7EAEE"}),
-    ]), style={"backgroundColor": "#191E25", "border": "1px solid #232A32"}), md=3, xs=6)
+        html.Div(label, style={"fontSize": "12px", "color": TEXT_DIM}),
+        html.Div(value, style={"fontSize": "24px", "fontWeight": "700", "color": TEXT}),
+    ]), style={"backgroundColor": PANEL_BG, "border": f"1px solid {BORDER}"}), md=3, xs=6)
 
 
-app.layout = dbc.Container(fluid=True, style={"backgroundColor": "#12161B", "minHeight": "100vh",
+def _picks_table_row(flight_id: str, hours: float) -> dict:
+    r = FLIGHT_RECORDS[FLIGHT_INDEX_BY_ID[flight_id]]
+    return {"flight": flight_id, "route": f"{r['origin']}→{r['dest']}",
+            "tail": r["orig_tail"], "hours": hours}
+
+
+DEFAULT_PICKS_DATA = [_picks_table_row(DEFAULT_PICK_FLIGHT, DEFAULT_HOURS)]
+
+app.layout = dbc.Container(fluid=True, style={"backgroundColor": PAGE_BG, "minHeight": "100vh",
                                               "padding": "22px 26px"}, children=[
-    html.H4("IROP tail-swap recovery", style={"color": "#E7EAEE", "fontWeight": "600"}),
-    html.Div(id="disruption-line", style={"color": "#F5A623", "fontSize": "13px", "marginBottom": "16px"}),
+    html.H4("IROP tail-swap recovery", style={"color": TEXT, "fontWeight": "600"}),
+    html.Div(id="disruption-line", style={"color": ACCENT_AMBER, "fontSize": "13px",
+                                          "fontWeight": "600", "marginBottom": "16px",
+                                          "whiteSpace": "pre-line"}),
 
     dbc.Row([
         dbc.Col(md=4, children=[
-            html.Div("1 · Pick the flight whose aircraft breaks",
-                     style={"color": "#8C97A6", "fontSize": "12px", "marginBottom": "6px"}),
+            html.Div("1 · Pick one or more flights whose aircraft breaks "
+                     "(check the box on each row)",
+                     style={"color": TEXT_DIM, "fontSize": "12px", "marginBottom": "6px"}),
             html.Div(dash.dash_table.DataTable(
                 id="flight-table", data=FLIGHT_RECORDS,
                 columns=[{"name": n, "id": c} for c, n in [
                     ("flight", "FLIGHT"), ("origin", "FROM"), ("dest", "TO"),
                     ("dep", "DEP"), ("arr", "ARR"), ("orig_tail", "TAIL")]],
-                row_selectable="single", selected_rows=[
-                    next(i for i, r in enumerate(FLIGHT_RECORDS) if r["flight"] == "F202")],
+                row_selectable="multi",
+                selected_rows=[FLIGHT_INDEX_BY_ID[DEFAULT_PICK_FLIGHT]],
                 fixed_rows={"headers": True},
-                style_table={"height": "430px", "overflowY": "auto"}, **_TABLE_STYLE,
+                style_table={"height": "300px", "overflowY": "auto",
+                            "border": f"1px solid {BORDER}", "borderRadius": "6px"},
+                **_TABLE_STYLE,
             )),
-            html.Div("2 · Grounding duration (hours)",
-                     style={"color": "#8C97A6", "fontSize": "12px", "margin": "16px 0 10px"}),
-            dcc.Slider(id="dur-slider", min=1, max=6, step=0.5, value=4,
-                       marks={i: {"label": f"{i}h", "style": {"color": "#5C6673"}}
-                              for i in range(1, 7)}),
+
+            html.Div("2 · Grounding duration per pick (hours - click a HOURS "
+                     "cell to edit)",
+                     style={"color": TEXT_DIM, "fontSize": "12px", "margin": "14px 0 6px"}),
+            html.Div(dash.dash_table.DataTable(
+                id="picks-table", data=DEFAULT_PICKS_DATA,
+                columns=[
+                    {"name": "FLIGHT", "id": "flight", "editable": False},
+                    {"name": "ROUTE", "id": "route", "editable": False},
+                    {"name": "TAIL", "id": "tail", "editable": False},
+                    {"name": "HOURS", "id": "hours", "editable": True, "type": "numeric"},
+                ],
+                editable=True,
+                style_table={"border": f"1px solid {BORDER}", "borderRadius": "6px"},
+                **_TABLE_STYLE,
+            )),
+            html.Div(id="pick-warning", style={"color": ACCENT_RED, "fontSize": "11px",
+                                               "marginTop": "8px", "lineHeight": "1.5"}),
+
             dbc.Button("Run recovery", id="run-btn", color="info", className="mt-4",
                        style={"fontWeight": "600", "width": "100%"}),
-            html.Div(id="feasibility-note", style={"color": "#5C6673", "fontSize": "11px",
+            html.Div(id="feasibility-note", style={"color": TEXT_DIM, "fontSize": "11px",
                                                    "marginTop": "16px", "lineHeight": "1.5"}),
         ]),
         dbc.Col(md=8, children=[
             dbc.Row(id="kpi-row", className="g-2"),
-            html.Div(id="headline", style={"color": "#E7EAEE", "fontSize": "14px",
+            html.Div(id="headline", style={"color": TEXT, "fontSize": "14px",
                                            "fontWeight": "600", "margin": "16px 0 4px"}),
             dcc.RadioItems(id="view-toggle",
                            options=[{"label": " Recovered plan", "value": "after"},
                                     {"label": " As scheduled", "value": "before"}],
                            value="after", inline=True,
-                           labelStyle={"marginRight": "16px", "color": "#8C97A6", "fontSize": "12px"}),
+                           labelStyle={"marginRight": "16px", "color": TEXT_DIM, "fontSize": "12px"}),
             dcc.Loading(dcc.Graph(id="gantt", config={"displayModeBar": False}), type="dot"),
-            html.Div("Recovery actions", style={"color": "#8C97A6", "fontSize": "12px",
+            html.Div("Recovery actions", style={"color": TEXT_DIM, "fontSize": "12px",
                                                 "margin": "6px 0 0"}),
-            html.Ul(id="action-list", style={"color": "#E7EAEE", "fontSize": "13px"}),
+            html.Ul(id="action-list", style={"color": TEXT, "fontSize": "13px"}),
         ]),
     ]),
 
@@ -126,26 +178,72 @@ app.layout = dbc.Container(fluid=True, style={"backgroundColor": "#12161B", "min
         "Synthetic schedule and disruption - built for this demo, not real airline data. "
         "CPLEX MIP via docplex, solved to proven optimality. Cost weights are illustrative "
         "(1/min delay, 2000/cancellation, 150/swap).",
-        style={"color": "#5C6673", "fontSize": "11px", "marginTop": "22px",
-               "borderTop": "1px solid #232A32", "paddingTop": "12px"},
+        style={"color": TEXT_DIM, "fontSize": "11px", "marginTop": "22px",
+               "borderTop": f"1px solid {BORDER}", "paddingTop": "12px"},
     ),
     dcc.Store(id="solve-tick", data=0),
 ])
 
 
+# ----------------------------------------------------------------------
+# Selection -> picks table (adds/removes rows, keeps edited hours,
+# rejects a second flight on a tail already picked).
+# ----------------------------------------------------------------------
+@app.callback(
+    Output("picks-table", "data"),
+    Output("pick-warning", "children"),
+    Output("run-btn", "disabled"),
+    Input("flight-table", "selected_rows"),
+    State("picks-table", "data"),
+)
+def on_selection_change(selected_rows, current_picks_data):
+    current_hours = {row["flight"]: row["hours"] for row in (current_picks_data or [])}
+    selected_flight_ids = [FLIGHT_RECORDS[i]["flight"] for i in (selected_rows or [])]
+
+    kept: List[dict] = []
+    tail_owner: Dict[str, str] = {}
+    warning = ""
+    for fid in selected_flight_ids:
+        tail = FLIGHT_RECORDS[FLIGHT_INDEX_BY_ID[fid]]["orig_tail"]
+        if tail in tail_owner:
+            warning = (f"{fid} is on tail {tail}, already grounded via "
+                       f"{tail_owner[tail]} — deselect one of them "
+                       f"(only one grounding per aircraft).")
+            continue
+        tail_owner[tail] = fid
+        hours = current_hours.get(fid, DEFAULT_HOURS)
+        kept.append(_picks_table_row(fid, hours))
+
+    return kept, warning, (len(kept) == 0)
+
+
 @app.callback(
     Output("solve-tick", "data"),
     Input("run-btn", "n_clicks"),
-    State("flight-table", "selected_rows"),
-    State("dur-slider", "value"),
+    State("picks-table", "data"),
     State("solve-tick", "data"),
     prevent_initial_call=True,
 )
-def on_run(_n, selected_rows, hours, tick):
-    if not selected_rows:
+def on_run(_n, picks_data, tick):
+    if not picks_data:
         raise dash.exceptions.PreventUpdate
-    flight_id = FLIGHT_RECORDS[selected_rows[0]]["flight"]
-    _run(flight_id, float(hours))
+    picks: List[Tuple[str, float]] = []
+    for row in picks_data:
+        try:
+            hours = float(row["hours"])
+        except (TypeError, ValueError):
+            continue
+        if hours > 0:
+            picks.append((row["flight"], hours))
+    if not picks:
+        raise dash.exceptions.PreventUpdate
+    # belt-and-suspenders: the picker already prevents duplicate-tail picks
+    # reaching here, but check again before solving so a bad state never
+    # gets silently overwritten instead of raising.
+    dup = find_duplicate_tail_picks(BASE_INPUTS, picks)
+    if dup:
+        raise dash.exceptions.PreventUpdate
+    _run(picks)
     return (tick or 0) + 1
 
 
@@ -170,10 +268,18 @@ def render(_tick, view):
     headline = pm.headline(summary, recovery)
     actions = [html.Li(line) for line in pm.action_list(recovery)]
 
-    d = _LAST["disruption"].iloc[0]
-    fid, hrs = _LAST["pick"]
-    disruption_line = (f"{fid}: tail {d['tail']} grounded {d['unavailable_from']}–"
-                       f"{d['unavailable_until']}  ({hrs:g}h)")
+    disruption_df: pd.DataFrame = _LAST["disruption"]
+    picks: List[Tuple[str, float]] = _LAST["picks"]
+    hours_by_tail = {}
+    for fid, hrs in picks:
+        tail = FLIGHT_RECORDS[FLIGHT_INDEX_BY_ID[fid]]["orig_tail"]
+        hours_by_tail[tail] = (fid, hrs)
+    lines = []
+    for _, d in disruption_df.iterrows():
+        fid, hrs = hours_by_tail.get(d["tail"], ("?", 0))
+        lines.append(f"{fid}: tail {d['tail']} grounded {d['unavailable_from']}–"
+                     f"{d['unavailable_until']}  ({hrs:g}h)")
+    disruption_line = "\n".join(lines)
 
     rep = _LAST["feasibility"]
     feas = (f"Feasibility check: {'passed' if rep.ok else 'FAILED'} "
